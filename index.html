@@ -262,7 +262,7 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid
         <div class="group">
           <span class="label">工具</span>
           <div class="seg" data-key="tool">
-            <button data-v="cell">格子塗色</button><button data-v="poly">多邊形色塊</button><button data-v="erase">橡皮擦</button>
+            <button data-v="cell">格子塗色</button><button data-v="poly">多邊形色塊</button><button data-v="free">手繪封閉形</button><button data-v="erase">橡皮擦</button>
           </div>
         </div>
         <div class="row" id="polyBox">
@@ -1031,12 +1031,12 @@ const hist = [], redoStack = [];
 const snap = () => JSON.stringify({N:DS.N, cells:DS.cells, polys:DS.polys});
 function pushHist(){ hist.push(snap()); if (hist.length > 80) hist.shift(); redoStack.length = 0; }
 function restoreSnap(s){ const o = JSON.parse(s); DS.N = o.N; DS.cells = o.cells; DS.polys = o.polys; S.grid = String(DS.N); }
-let poly = [], hoverPt = null, painting = false;
+let poly = [], hoverPt = null, painting = false, freeLine = null;
 function customLesson(){
   const N = DS.N, cs = 1000/N, parts = [], order = [];
   DS.cells.forEach(c => { if (c && !order.includes(c)) order.push(c); });
   for (const c of order) parts.push({name:`${COLORS[c].n}色格子`, c, z:1, draw:g=>{ DS.cells.forEach((k,i) => { if (k===c){ const x=i%N, y=(i/N)|0; g.rect(x*cs-.6, y*cs-.6, (x+1)*cs+.6, (y+1)*cs+.6); } }); }});
-  DS.polys.forEach((p,i) => { const pts = p.pts.slice(); parts.push({name:`${COLORS[p.c].n}色色塊`, c:p.c, z:2+i, draw:g=>g.poly(pts)}); });
+  DS.polys.forEach((p,i) => { const pts = p.pts.slice(); parts.push({name:`${COLORS[p.c].n}色${p.free ? '手繪' : ''}色塊`, c:p.c, z:2+i, draw:g=>g.poly(pts)}); });
   const name = ($('#dName').value || '').trim() || '我的設計';
   return {name, level:0, theme:'自己設計', tip:'', parts, custom:true, sig:snap()};
 }
@@ -1058,8 +1058,16 @@ function drawEdit(ctx, b){
     ctx.stroke(); ctx.setLineDash([]);
     for (let i=0;i<poly.length;i+=2){ const [x,y] = toS(poly[i],poly[i+1]); ctx.beginPath(); ctx.arc(x,y,i?6:13,0,7); ctx.fillStyle = i ? '#d9a400' : 'rgba(217,164,0,.35)'; ctx.fill(); if (!i) ctx.stroke(); }
     ctx.restore(); }
-  if (hoverPt && S.tool !== 'poly'){ const x = Math.floor(hoverPt[0]/(1000/N)), y = Math.floor(hoverPt[1]/(1000/N));
+  if (hoverPt && (S.tool === 'cell' || S.tool === 'erase')){ const x = Math.floor(hoverPt[0]/(1000/N)), y = Math.floor(hoverPt[1]/(1000/N));
     if (x>=0 && y>=0 && x<N && y<N){ ctx.save(); ctx.strokeStyle = S.tool==='erase' ? '#ef4b4b' : '#3b2b2b'; ctx.lineWidth=3; ctx.strokeRect(b.x+x*cs+1.5, b.y+y*cs+1.5, cs-3, cs-3); ctx.restore(); } }
+  if (freeLine && freeLine.length >= 4){
+    ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.beginPath(); ctx.moveTo(...toS(freeLine[0],freeLine[1])); for (let i=2;i<freeLine.length;i+=2) ctx.lineTo(...toS(freeLine[i],freeLine[i+1]));
+    ctx.fillStyle = COLORS[S.color].h + '66'; ctx.fill(); ctx.strokeStyle = '#3b2b2b'; ctx.lineWidth = 4; ctx.stroke();
+    const n = freeLine.length; ctx.setLineDash([8,7]); ctx.strokeStyle='#d9a400'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(...toS(freeLine[n-2],freeLine[n-1])); ctx.lineTo(...toS(freeLine[0],freeLine[1])); ctx.stroke();
+    ctx.setLineDash([]); ctx.beginPath(); ctx.arc(...toS(freeLine[0],freeLine[1]), 9, 0, 7); ctx.fillStyle='rgba(217,164,0,.45)'; ctx.fill();
+    ctx.restore(); }
   if (hoverPt && S.tool === 'poly'){ const [x,y] = toS(...hoverPt); ctx.beginPath(); ctx.arc(x,y,5,0,7); ctx.fillStyle='#d9a400'; ctx.fill(); }
 }
 function toArt(e){
@@ -1077,7 +1085,7 @@ function finishPoly(){ if (poly.length >= 6){ pushHist(); DS.polys.push({c:S.col
 function designChanged(){ saveDesign(); updateDesignStat(); updateDesignA4(); }
 function updateDesignStat(){
   const used = new Set([...DS.cells.filter(Boolean), ...DS.polys.map(p => p.c)]), nCells = DS.cells.filter(Boolean).length;
-  $('#dStat').innerHTML = `<span class="chip">${used.size} 種顏色</span><span class="chip">${nCells} 格</span><span class="chip">${DS.polys.length} 個多邊形色塊</span>`;
+  $('#dStat').innerHTML = `<span class="chip">${used.size} 種顏色</span><span class="chip">${nCells} 格</span><span class="chip">${DS.polys.filter(p=>!p.free).length} 個多邊形</span><span class="chip">${DS.polys.filter(p=>p.free).length} 個手繪形</span>`;
 }
 
 /* ---------- 下載 ---------- */
@@ -1301,6 +1309,7 @@ stage.addEventListener('pointerdown', e => {
     if (p[0] < -20 || p[1] < -20 || p[0] > 1020 || p[1] > 1020) return;
     poly.push(clamp(p[0],0,1000), clamp(p[1],0,1000)); updateUI(); render(); return;
   }
+  if (S.tool === 'free'){ freeLine = [clamp(pt[0],0,1000), clamp(pt[1],0,1000)]; stage.setPointerCapture(e.pointerId); render(); return; }
   if (S.tool === 'erase'){ for (let i=DS.polys.length-1;i>=0;i--) if (inPoly(pt[0], pt[1], DS.polys[i].pts)){ pushHist(); DS.polys.splice(i,1); designChanged(); render(); return; } }
   pushHist(); painting = true; stage.setPointerCapture(e.pointerId);
   if (!paintCell(pt)) { /* 沒改變也沒關係 */ } render();
@@ -1309,9 +1318,21 @@ stage.addEventListener('pointermove', e => {
   if (S.mode !== 'design') return;
   const pt = toArt(e); hoverPt = S.tool === 'poly' ? snapPt(pt) : pt;
   if (painting) paintCell(pt);
+  if (freeLine){ const n = freeLine.length, x = clamp(pt[0],0,1000), y = clamp(pt[1],0,1000);
+    if (Math.hypot(x-freeLine[n-2], y-freeLine[n-1]) > 6) freeLine.push(x, y); }
   requestRender();
 });
-const endPaint = () => { if (painting){ painting = false; if (hist.length && hist[hist.length-1] === snap()) hist.pop(); designChanged(); updateUI(); render(); } };
+/* 手繪：放開時自動接回起點，抽稀後修圓滑，變成一個色塊 */
+function finishFree(){
+  const L = freeLine; freeLine = null; if (!L) return;
+  let pts = []; for (let i=0;i<L.length;i+=2){ const n = pts.length; if (!n || Math.hypot(L[i]-pts[n-2], L[i+1]-pts[n-1]) >= 14) pts.push(L[i], L[i+1]); }
+  let area = 0; for (let i=0;i<pts.length;i+=2){ const j = (i+2)%pts.length; area += pts[i]*pts[j+1] - pts[j]*pts[i+1]; }
+  if (pts.length < 8 || Math.abs(area)/2 < 1500){ toast('圈得太小了，按住拖曳畫大一點的一圈'); render(); return; }
+  let q = []; for (let i=0;i<pts.length;i+=2) q.push([pts[i], pts[i+1]]);
+  for (let it=0; it<2; it++){ const o = []; for (let i=0;i<q.length;i++){ const [a,b] = q[i], [c,d] = q[(i+1)%q.length]; o.push([a*.75+c*.25, b*.75+d*.25], [a*.25+c*.75, b*.25+d*.75]); } q = o; }
+  pushHist(); DS.polys.push({c:S.color, free:true, pts:q.flat().map(v => Math.round(v))}); designChanged(); updateUI(); render();
+}
+const endPaint = () => { if (freeLine){ finishFree(); return; } if (painting){ painting = false; if (hist.length && hist[hist.length-1] === snap()) hist.pop(); designChanged(); updateUI(); render(); } };
 stage.addEventListener('pointerup', endPaint);
 stage.addEventListener('pointercancel', endPaint);
 stage.addEventListener('pointerleave', () => { if (!painting){ hoverPt = null; requestRender(); } });
@@ -1363,6 +1384,7 @@ function updateHint(){
   else if (S.mode === 'lesson'){ const s = lessonSteps[S.lstep]; h = s ? `步驟 ${S.lstep+1}：${s.title}${busy ? '…' : ''}` : ''; }
   else if (S.tool === 'cell') h = `按住拖曳，把格子塗成「${COLORS[S.color].n}」。`;
   else if (S.tool === 'erase') h = '按住拖曳擦掉格子；點一下多邊形色塊可以刪掉它。';
+  else if (S.tool === 'free') h = freeLine ? '畫一整圈，放開手就會自動接回起點。' : `按住拖曳畫一個封閉的形狀（例如雲、葉子），放開就變成「${COLORS[S.color].n}」色塊。`;
   else h = poly.length ? '繼續點轉角，點回第一個點就完成這一塊。' : '一下一下點出轉角，畫出自由形狀的色塊（靠近格線交叉點會自動對齊）。';
   $('#hint').textContent = h;
 }
@@ -1390,7 +1412,7 @@ function updateUI(){
     stage.style.cursor = 'default';
     $('#tag').textContent = LD ? `${LD.colors.length} 色・${les.parts.length} 區` : '';
   } else {
-    $('#dHow').textContent = '用格子塗色畫出圖案，或用多邊形畫自由形狀；每種顏色會自動編號。畫好按「播放」，就會變成一步一步的撕貼動畫和 A4 底稿。';
+    $('#dHow').textContent = '用格子塗色畫出圖案，用多邊形畫直邊的形狀，或用手繪封閉形直接圈出圓圓彎彎的形狀；每種顏色會自動編號。畫好按「播放」，就會變成一步一步的撕貼動畫和 A4 底稿。';
     $('#dColors').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === S.color)));
     $('#polyBox').hidden = S.tool !== 'poly';
     $('#polyDone').disabled = poly.length < 6; $('#polyCancel').disabled = !poly.length;
