@@ -220,6 +220,12 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid
           <span class="label">色票對照（底稿上的數字＝顏色）</span>
           <div class="palette-key" id="lKey"></div>
         </div>
+        <div class="group">
+          <span class="label">底圖怎麼來</span>
+          <div class="seg" data-key="base">
+            <button data-v="print">印出教案底稿</button><button data-v="draw">自己用鉛筆畫</button>
+          </div>
+        </div>
         <div class="stepcard" aria-live="polite">
           <div class="sc-top"><span id="scNum"></span><b id="scTitle"></b></div>
           <p id="scText"></p>
@@ -570,7 +576,7 @@ function analyze(p, seed){
   const d = c.getImageData(0,0,G,G).data, inn = new Uint8Array(G*G);
   let cnt=0, sx=0, sy=0, minx=G, miny=G, maxx=-1, maxy=-1;
   for (let i=0;i<G*G;i++) if (d[i*4+3] > 127){ inn[i]=1; cnt++; const x=i%G, y=(i/G)|0; sx+=x; sy+=y; if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
-  p.area = cnt*CELL*CELL; p.pieces = []; p.labels = [];
+  p.area = cnt*CELL*CELL; p.pieces = []; p.labels = []; p.inn = inn;
   if (!cnt){ p.cx = p.cy = 500; return; }
   p.cx = (sx/cnt+.5)*CELL; p.cy = (sy/cnt+.5)*CELL;
   const dIn = chamfer(inn,1,0), dOut = chamfer(inn,0,1e9);
@@ -595,7 +601,8 @@ function analyze(p, seed){
       if (!inside && dOut[k]*CELL >= s*.45) continue;
       const key = inside ? dIn[k]*CELL : -dOut[k]*CELL;
       const ring = Math.floor((key + s*.5)/(s*.85));
-      out.push({x:jx, y:jy, path, col:shade(p.hex, sh), over: ring <= 0 && ov < .55, ring, ang:Math.atan2(jy-p.cy, jx-p.cx), spin:(rng()-.5)*.9});
+      const clip = inside ? (ring <= 0 && ov < .5 ? 'none' : 'exact') : (ov < .6 ? 'dil' : 'exact');
+      out.push({x:jx, y:jy, path, col:shade(p.hex, sh), clip, ring, ang:Math.atan2(jy-p.cy, jx-p.cx), spin:(rng()-.5)*.9});
     }
   out.sort((a,b) => a.ring-b.ring || a.ang-b.ang); // 由外而內，一圈一圈
   p.pieces = out; p.s = s;
@@ -634,8 +641,8 @@ function drawPiece(ctx, pc, k=1, a=1, dy=0, rot=0){
   ctx.fillStyle = pc.col; ctx.fill(pc.path);
   ctx.restore();
 }
-/* 真的撕貼不會剛好停在線上：邊緣的碎片約一半會稍微超出線（約 1 公釐），其餘用直邊對齊線 */
-const OVER = 7;
+/* 真的撕貼不會剛好停在線上：靠線的碎片約一半沒修，直接凸出線外 3～7 公釐；其餘用直邊對齊線 */
+const OVER = 14;
 function dilate(mask, res){
   const out = mk(res), c = out.getContext('2d'), d = OVER*res/1000;
   c.drawImage(mask,0,0); for (let k=0;k<12;k++){ const a = k*Math.PI/6, r = k%2 ? d*.6 : d; c.drawImage(mask, Math.cos(a)*r, Math.sin(a)*r); }
@@ -643,10 +650,10 @@ function dilate(mask, res){
 }
 function renderPartTo(dst, p, res, tmp){
   tmp = tmp || mk(res); const t = tmp.getContext('2d'), dil = res === 1000 && p.dil ? p.dil : dilate(p.mask, res);
-  for (const [over, m] of [[true, dil], [false, p.mask]]){
+  for (const [clip, m] of [['none', null], ['dil', dil], ['exact', p.mask]]){
     t.setTransform(1,0,0,1,0,0); t.globalCompositeOperation='source-over'; t.clearRect(0,0,res,res);
-    t.setTransform(res/1000,0,0,res/1000,0,0); for (const pc of p.pieces) if (!!pc.over === over) drawPiece(t, pc);
-    t.setTransform(1,0,0,1,0,0); t.globalCompositeOperation='destination-in'; t.drawImage(m,0,0); t.globalCompositeOperation='source-over';
+    t.setTransform(res/1000,0,0,res/1000,0,0); for (const pc of p.pieces) if (pc.clip === clip) drawPiece(t, pc);
+    t.setTransform(1,0,0,1,0,0); if (m){ t.globalCompositeOperation='destination-in'; t.drawImage(m,0,0); } t.globalCompositeOperation='source-over';
     dst.getContext('2d').drawImage(tmp,0,0);
   }
 }
@@ -669,23 +676,57 @@ function renderArt(ld, res){
 }
 
 /* ---------- 狀態 ---------- */
-const S = { mode:'lesson', lesson:0, last:0, lstep:0, speed:'mid', tool:'cell', grid:'12', color:'red', custom:null };
+const S = { base:'print', mode:'lesson', lesson:0, last:0, lstep:0, speed:'mid', tool:'cell', grid:'12', color:'red', custom:null };
 let LD = null, lessonSteps = [], loadSeq = 0;
 let busy = false, animToken = 0, recording = false, caption = null, hudMsg = null;
-const V = { row:'none', sheetsT:0, pileT:0, tearT:-1, done:0, cur:-1, glueT:0, fly:[], markT:0, finT:0 };
+const V = { boardT:1, drawT:0, row:'none', sheetsT:0, pileT:0, tearT:-1, done:0, cur:-1, glueT:0, fly:[], markT:0, finT:0 };
 const stage = $('#stage'), sctx = stage.getContext('2d');
-const BOARD = mk(1000), DONE = mk(1000), CUR = mk(1000), CURO = mk(1000), CURM = mk(1000), GLUE = mk(1000), TMP = mk(1000);
+const BOARD = mk(1000), DONE = mk(1000), CUR = mk(1000), CURO = mk(1000), CURN = mk(1000), PENCIL = mk(1000), CURM = mk(1000), GLUE = mk(1000), TMP = mk(1000);
 let dpr = 1, PILES = [], CHUNKS = [];
 const TK = {};
 function readTokens(){ const cs = getComputedStyle(document.documentElement); for (const k of ['mat','mat-line','mat-line-strong']) TK[k] = cs.getPropertyValue('--'+k).trim(); }
 const curLes = () => S.lesson < 0 ? S.custom : LESSONS[S.lesson];
 
+function contours(ld){
+  const lab = new Int16Array(G*G).fill(-1);
+  ld.parts.forEach((p, k) => { if (p.inn) for (let i=0;i<G*G;i++) if (p.inn[i]) lab[i] = k; });
+  const adj = new Map(), add = (a,b) => { (adj.get(a) || adj.set(a,[]).get(a)).push(b); (adj.get(b) || adj.set(b,[]).get(b)).push(a); }, W = G+1;
+  for (let y=0;y<G;y++) for (let x=0;x<G;x++){ const i = y*G+x;
+    if (x<G-1 && lab[i] !== lab[i+1] && y>0 && y<G-1) add(y*W+x+1, (y+1)*W+x+1);
+    if (y<G-1 && lab[i] !== lab[i+G] && x>0 && x<G-1) add((y+1)*W+x, (y+1)*W+x+1); }
+  const used = new Set(), key = (a,b) => a<b ? a+'-'+b : b+'-'+a, lines = [];
+  const starts = [...adj.keys()].sort((a,b) => (adj.get(a).length%2 ? 0 : 1) - (adj.get(b).length%2 ? 0 : 1));
+  for (const st of starts){
+    for (;;){ const nb = adj.get(st).find(n => !used.has(key(st,n))); if (nb === undefined) break;
+      const pts = [st]; let cur = st, nx = nb;
+      while (nx !== undefined){ used.add(key(cur,nx)); pts.push(nx); const prev = cur; cur = nx; nx = adj.get(cur).find(n => !used.has(key(cur,n))); }
+      if (pts.length < 6) continue;
+      let q = pts.filter((_,i) => i%3===0 || i===pts.length-1).map(k => [(k%W)*CELL, Math.floor(k/W)*CELL]);
+      for (let it=0; it<2; it++){ const o=[q[0]]; for (let i=0;i<q.length-1;i++){ const [a,b]=q[i], [c,d]=q[i+1]; o.push([a*.75+c*.25, b*.75+d*.25],[a*.25+c*.75, b*.25+d*.75]); } o.push(q[q.length-1]); q=o; }
+      lines.push(q.flat()); }
+  }
+  const len = l => { let t=0; for (let i=2;i<l.length;i+=2) t += Math.hypot(l[i]-l[i-2], l[i+1]-l[i-1]); return t; };
+  const rng = RNG(hash(ld.les.name)+11);
+  return lines.sort((a,b) => len(b)-len(a)).map(l => l.map(v => v + (rng()-.5)*1.6));
+}
+function drawPencil(c, t){
+  const lt = clamp(t/.82, 0, 1), tip = strokeLines(c, LD.pencil, 3.2, '#857a74', lt);
+  const nt = clamp((t-.82)/.18, 0, 1);
+  if (nt > 0){ c.save(); c.globalAlpha = nt; c.fillStyle='#857a74'; c.textAlign='center'; c.textBaseline='middle';
+    for (const p of LD.parts) for (const l of p.labels){ c.font = `${l.size*1.05}px ${DISPLAY}`; c.fillText(String(p.num), l.x, l.y); } c.restore(); }
+  return lt < 1 ? tip : null;
+}
 function makeBoard(){
   const c = BOARD.getContext('2d'); c.setTransform(1,0,0,1,0,0); c.fillStyle='#fffdf8'; c.fillRect(0,0,1000,1000);
-  c.drawImage(LD.outline,0,0);
-  c.fillStyle='#ad9f97'; c.textAlign='center'; c.textBaseline='middle';
-  for (const p of LD.parts) for (const l of p.labels){ c.font = `${l.size}px ${DISPLAY}`; c.fillText(String(p.num), l.x, l.y+l.size*.04); }
-  if (LD.les.marker){ c.save(); c.setLineDash([10,9]); strokeLines(c, LD.les.marker.lines, 2.4, '#b9aca4'); c.restore(); }
+  if (S.base === 'print'){
+    c.drawImage(LD.outline,0,0);
+    c.fillStyle='#ad9f97'; c.textAlign='center'; c.textBaseline='middle';
+    for (const p of LD.parts) for (const l of p.labels){ c.font = `${l.size}px ${DISPLAY}`; c.fillText(String(p.num), l.x, l.y+l.size*.04); }
+    if (LD.les.marker){ c.save(); c.setLineDash([10,9]); strokeLines(c, LD.les.marker.lines, 2.4, '#b9aca4'); c.restore(); }
+  } else {
+    if (!LD.pencil) LD.pencil = contours(LD);
+    const pc = PENCIL.getContext('2d'); pc.setTransform(1,0,0,1,0,0); pc.clearRect(0,0,1000,1000); drawPencil(pc, 1);
+  }
   // 撕紙示範與碎紙堆
   const rng = RNG(hash(LD.les.name)+5);
   PILES = LD.colors.map(key => { const a = []; for (let i=0;i<12;i++) a.push({x:(rng()-.5)*74, y:(rng()-.5)*40 + (i<4 ? 8 : 0), path:tornPath(rng, 17), col:shade(COLORS[key].h,(rng()-.5)*.16)}); return a; });
@@ -712,13 +753,14 @@ function makeBoard(){
 function rebuildDone(){
   const c = DONE.getContext('2d'); c.setTransform(1,0,0,1,0,0); c.clearRect(0,0,1000,1000);
   for (let i=0;i<V.done && i<LD.parts.length;i++) renderPartTo(DONE, LD.parts[i], 1000, TMP);
-  for (const cv of [CUR, CURO, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
+  for (const cv of [CUR, CURO, CURN, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
 }
 function refreshCURM(p){
-  const c = CURM.getContext('2d'); c.globalCompositeOperation='source-over'; c.clearRect(0,0,1000,1000); c.drawImage(CURO,0,0);
-  c.globalCompositeOperation='destination-in'; c.drawImage(p.dil,0,0); c.globalCompositeOperation='source-over';
-  const t = TMP.getContext('2d'); t.setTransform(1,0,0,1,0,0); t.globalCompositeOperation='source-over'; t.clearRect(0,0,1000,1000); t.drawImage(CUR,0,0);
-  t.globalCompositeOperation='destination-in'; t.drawImage(p.mask,0,0); t.globalCompositeOperation='source-over'; c.drawImage(TMP,0,0);
+  const c = CURM.getContext('2d'); c.globalCompositeOperation='source-over'; c.clearRect(0,0,1000,1000); c.drawImage(CURN,0,0);
+  const t = TMP.getContext('2d');
+  for (const [src, m] of [[CURO, p.dil], [CUR, p.mask]]){
+    t.setTransform(1,0,0,1,0,0); t.globalCompositeOperation='source-over'; t.clearRect(0,0,1000,1000); t.drawImage(src,0,0);
+    t.globalCompositeOperation='destination-in'; t.drawImage(m,0,0); t.globalCompositeOperation='source-over'; c.drawImage(TMP,0,0); }
 }
 function makeGlue(p){ const c = GLUE.getContext('2d'); c.globalCompositeOperation='source-over'; c.clearRect(0,0,1000,1000); c.drawImage(p.mask,0,0);
   c.globalCompositeOperation='source-in'; c.fillStyle='rgba(120,185,255,.34)'; c.fillRect(0,0,1000,1000); c.globalCompositeOperation='source-over'; }
@@ -813,7 +855,14 @@ function render(){
   ctx.fillStyle='rgba(0,0,0,.2)'; ctx.fillRect(b.x+6, b.y+8, bs, bs);
   if (editView()){ drawEdit(ctx, b); drawCaption(ctx); return; }
   if (!LD){ ctx.fillStyle='#fffdf8'; ctx.fillRect(b.x,b.y,bs,bs); drawCaption(ctx); return; }
-  ctx.drawImage(BOARD, b.x, b.y, bs, bs);
+  if (V.boardT < 1){ const e = easeOut(V.boardT); ctx.save(); ctx.globalAlpha = e; ctx.drawImage(BOARD, b.x, b.y - (1-e)*260, bs, bs); ctx.restore();
+    if (S.base === 'print') pill(ctx, '印出 A4 底稿（實際大小 100%）', 500, b.y + bs/2, 28);
+  } else ctx.drawImage(BOARD, b.x, b.y, bs, bs);
+  if (S.base === 'draw' && V.drawT > 0){
+    if (V.drawT >= 1) ctx.drawImage(PENCIL, b.x, b.y, bs, bs);
+    else { ctx.save(); ctx.translate(b.x, b.y); ctx.scale(b.s, b.s); const tip = drawPencil(ctx, V.drawT);
+      if (tip){ ctx.translate(tip[0], tip[1]); ctx.rotate(-.55); ctx.fillStyle='#f6c636'; ctx.fillRect(-9,-130,18,104); ctx.fillStyle='#f3d3a8'; ctx.beginPath(); ctx.moveTo(-9,-26); ctx.lineTo(9,-26); ctx.lineTo(0,0); ctx.closePath(); ctx.fill(); ctx.fillStyle='#555'; ctx.beginPath(); ctx.moveTo(-3,-8); ctx.lineTo(3,-8); ctx.lineTo(0,0); ctx.closePath(); ctx.fill(); ctx.fillStyle='#f390b5'; ctx.fillRect(-9,-150,18,20); }
+      ctx.restore(); } }
   ctx.drawImage(DONE, b.x, b.y, bs, bs);
   if (V.cur >= 0){
     const p = LD.parts[V.cur];
@@ -874,7 +923,10 @@ const TIPS = ['碎片太大貼不進邊角時，再撕小一點，讓它剛好�
 function buildSteps(ld){
   const les = ld.les, names = ld.colors.map((k,i) => `${i+1} 號${COLORS[k].n}`).join('、');
   const steps = [
-    {type:'prep', title:'準備材料', text:`準備底稿一張（A4 列印版）、色紙 ${ld.colors.length} 種顏色（${ld.colors.map(k=>COLORS[k].n).join('、')}）、口紅膠和濕紙巾。`, tip:`底稿上每一區都有數字：${names}。數字對到色票，就知道要貼哪個顏色。`},
+    S.base === 'print'
+      ? {type:'prep', title:'印出底稿、準備材料', text:`印出這一課的 A4 底稿（列印選「實際大小 100%」），再準備色紙 ${ld.colors.length} 種顏色（${ld.colors.map(k=>COLORS[k].n).join('、')}）、口紅膠和濕紙巾。`, tip:`底稿上每一區都有數字：${names}。數字對到色票，就知道要貼哪個顏色。`}
+      : {type:'prep', title:'準備材料', text:`準備一張白色圖畫紙、鉛筆和橡皮擦，再準備色紙 ${ld.colors.length} 種顏色（${ld.colors.map(k=>COLORS[k].n).join('、')}）、口紅膠和濕紙巾。`, tip:'圖畫紙比影印紙厚，貼了膠水比較不會皺。'},
+    ...(S.base === 'draw' ? [{type:'draw', title:'用鉛筆畫底圖', text:`用鉛筆輕輕畫出外形，先畫大的形狀，再畫小細節。畫好後在每一區寫上顏色號碼：${names}。`, tip:'不會畫沒關係：可以把 A4 底稿墊在下面描，或貼在窗戶上透光描。線畫歪了也沒關係，貼上碎紙就蓋住了。'}] : []),
     {type:'tear', title:'撕成小碎片', text:'兩手的大拇指和食指捏住色紙，一手往前、一手往後，先撕成長條，再撕成約 1～2 公分（指甲大小）的小片。同一個顏色放一堆。', tip:'色紙四周原本的直邊撕下來後另外放一小堆，等一下貼邊線用；想要直直的邊，先摺出摺痕再撕。'}
   ];
   let firstPaste = 0;
@@ -883,25 +935,29 @@ function buildSteps(ld){
     steps.push({type:'paste', part:i, swatch:p.hex, title:`貼${p.name}`,
       text:`找到寫著 ${p.num} 的地方，用 ${p.num} 號${COLORS[p.c].n}色。先塗一小塊膠，沿著線的邊緣貼一圈，再一圈一圈往中間補滿${big ? '，大片的地方可以分好幾次塗膠' : ''}。`,
       tip: firstPaste-- === 0 ? EDGE_TIP : (i === ld.parts.length-1 && les.tip ? les.tip : TIPS[i % TIPS.length])}); });
-  if (les.marker) steps.push({type:'marker', title:`畫上${les.marker.name}`, text:`等膠乾一點，用黑色簽字筆沿著底稿上的細虛線，畫上${les.marker.name}。`, tip:'手不穩的話，把紙轉到順手的方向再畫，不用一筆畫完。'});
+  if (les.marker) steps.push({type:'marker', title:`畫上${les.marker.name}`, text: S.base === 'print' ? `等膠乾一點，用黑色簽字筆沿著底稿上的細虛線，畫上${les.marker.name}。` : `等膠乾一點，用黑色簽字筆在碎紙上直接畫上${les.marker.name}。`, tip:'手不穩的話，把紙轉到順手的方向再畫，不用一筆畫完。'});
   steps.push({type:'done', title:'完成', text:'用手掌輕輕把整張壓平，翹起來的邊角再補一點膠。最後簽上名字和日期，作品就完成了！', tip: les.tip || '可以裱在卡紙上，或貼在牆上一起欣賞。'});
   return steps;
 }
 function applyFinal(s){
-  if (s.type==='prep'){ V.row='sheets'; V.sheetsT=1; }
+  if (s.type==='prep'){ V.row='sheets'; V.sheetsT=1; V.boardT=1; }
+  else if (s.type==='draw') V.drawT = 1;
   else if (s.type==='tear'){ V.row='piles'; V.pileT=1; }
   else if (s.type==='paste'){ V.done = s.part+1; }
   else if (s.type==='marker') V.markT = 1;
   else if (s.type==='done') V.finT = 1;
 }
 function setStateBefore(i){
-  Object.assign(V, {row:'none', sheetsT:0, pileT:0, tearT:-1, done:0, cur:-1, glueT:0, fly:[], markT:0, finT:0});
+  Object.assign(V, {boardT:1, drawT:0, row:'none', sheetsT:0, pileT:0, tearT:-1, done:0, cur:-1, glueT:0, fly:[], markT:0, finT:0});
+  if (i === 0) V.boardT = 0;
   for (let j=0;j<i;j++) applyFinal(lessonSteps[j]);
   rebuildDone();
 }
 async function animStep(s, tok){
-  if (s.type==='prep'){ V.row='sheets'; V.sheetsT=0;
+  if (s.type==='prep'){ V.row='sheets'; V.sheetsT=0; V.boardT=0;
+    if (!await tween((S.base==='print' ? 1800 : 900)*spd(), t => V.boardT = t, tok)) return false;
     if (!await tween(1700*spd(), t => V.sheetsT = t, tok)) return false; return wait(500, tok); }
+  if (s.type==='draw'){ if (!await tween(clamp(LD.pencil.length*420, 5500, 11000)*spd(), t => V.drawT = t, tok)) return false; return wait(500, tok); }
   if (s.type==='tear'){
     V.row='sheets'; V.sheetsT=1; V.tearT=0;
     if (!await tween(4*950*spd(), t => V.tearT = 4*t, tok)) return false;
@@ -909,21 +965,21 @@ async function animStep(s, tok){
     if (!await tween(1100*spd(), t => V.pileT = t, tok)) return false; return wait(400, tok); }
   if (s.type==='paste'){
     const p = LD.parts[s.part]; V.cur = s.part; V.done = s.part; V.glueT = 0; V.fly = [];
-    for (const cv of [CUR, CURO, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
+    for (const cv of [CUR, CURO, CURN, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
     p.dil = p.dil || dilate(p.mask, 1000); makeGlue(p);
     if (!await tween(1000*spd(), t => V.glueT = t, tok)) return false;
     V.glueT = 1;
-    const n = p.pieces.length, dur = clamp(n*48, 1600, 7000)*spd(), fd = Math.min(340*spd(), dur*.3), cc = CUR.getContext('2d'), co = CURO.getContext('2d');
+    const n = p.pieces.length, dur = clamp(n*48, 1600, 7000)*spd(), fd = Math.min(340*spd(), dur*.3), cc = {exact:CUR.getContext('2d'), dil:CURO.getContext('2d'), none:CURN.getContext('2d')};
     let li = 0;
     const ok = await tween(dur, t => {
       const time = t*dur, st = i => i/n*(dur-fd); let dirty = false;
-      while (li < n && st(li) + fd <= time + .01){ drawPiece(p.pieces[li].over ? co : cc, p.pieces[li]); li++; dirty = true; }
+      while (li < n && st(li) + fd <= time + .01){ drawPiece(cc[p.pieces[li].clip], p.pieces[li]); li++; dirty = true; }
       if (dirty) refreshCURM(p);
       V.fly = []; for (let i=li;i<n && st(i) <= time;i++) V.fly.push({i, p:(time-st(i))/fd});
     }, tok);
     if (!ok) return false;
     V.fly = []; DONE.getContext('2d').drawImage(CURM,0,0); V.done = s.part+1; V.cur = -1; V.glueT = 0;
-    for (const cv of [CUR, CURO, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
+    for (const cv of [CUR, CURO, CURN, CURM]) cv.getContext('2d').clearRect(0,0,1000,1000);
     render(); return wait(450, tok); }
   if (s.type==='marker'){ if (!await tween(2400*spd(), t => V.markT = t, tok)) return false; return wait(300, tok); }
   if (s.type==='done'){ return tween(1500*spd(), t => V.finT = t, tok); }
@@ -1167,6 +1223,7 @@ for (const el of $$('.seg[data-key]')){
   const key = el.dataset.key;
   el.querySelectorAll('button').forEach(b => b.onclick = () => {
     if (S[key] === b.dataset.v) return;
+    if (key === 'base'){ S.base = b.dataset.v; if (S.mode === 'lesson' && LD){ cancelAnim(); makeBoard(); lessonSteps = buildSteps(LD); renderStepList(); updateUI(); runLessonStep(0); } else updateUI(); return; }
     if (key === 'grid'){ const has = DS.cells.some(Boolean); pushHist(); DS.N = +b.dataset.v; DS.cells = Array(DS.N*DS.N).fill(null); designChanged();
       if (has) toast(`換成 ${DS.N} × ${DS.N} 格，格子已清空；按「復原」可以找回`); }
     S[key] = b.dataset.v; if (key === 'tool') poly = [];
