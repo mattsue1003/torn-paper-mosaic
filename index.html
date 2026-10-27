@@ -149,6 +149,14 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .steplist button.done .n{background:var(--mint);color:#fff;border-color:var(--mint)}
 .steplist button[aria-current="step"]{background:var(--accent-soft);color:var(--ink);font-weight:700}
 .steplist button[aria-current="step"] .n{background:var(--accent);border-color:var(--accent);color:#fff}
+.seg.tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.seg.tools button{padding:8px 6px}
+.shapes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}
+.shapes button{aspect-ratio:1;border:2px solid var(--line);background:var(--surface);border-radius:14px;cursor:pointer;display:grid;place-items:center;color:var(--ink);padding:6px;font:inherit;font-size:12px}
+.shapes button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.shapes svg{width:100%;height:100%;max-width:30px}
+label.rng{display:flex;justify-content:space-between;font-size:14px;color:var(--muted)}
+input[type=range]{width:100%;accent-color:var(--accent);min-height:28px}
 .howto{margin:0;font-size:15px;background:var(--accent-soft);border-radius:14px;padding:8px 12px}
 .cta{min-height:56px;border:none!important;border-radius:999px!important;background:var(--accent)!important;color:var(--accent-ink)!important;font-family:var(--font-display)!important;font-size:20px!important;cursor:pointer;letter-spacing:.06em;box-shadow:0 4px 0 var(--accent-deep)!important}
 .ghost{width:100%}
@@ -260,18 +268,38 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid
           <p class="howto" id="dHow"></p>
         </div>
         <div class="group">
-          <span class="label">工具</span>
-          <div class="seg" data-key="tool">
-            <button data-v="cell">格子塗色</button><button data-v="poly">多邊形色塊</button><button data-v="free">手繪封閉形</button><button data-v="erase">橡皮擦</button>
+          <span class="label">手繪工具</span>
+          <div class="seg tools" data-key="tool">
+            <button data-v="stroke">畫筆（色紙）</button><button data-v="line">簽字筆線條</button><button data-v="bucket">油漆桶填色</button><button data-v="free">手繪封閉形</button>
           </div>
+          <span class="label">圖形與格子</span>
+          <div class="seg tools" data-key="tool">
+            <button data-v="stamp">圖形印章</button><button data-v="poly">多邊形色塊</button><button data-v="cell">格子塗色</button><button data-v="erase">橡皮擦</button>
+          </div>
+        </div>
+        <div class="group" id="brushBox">
+          <span class="label" id="brushLabel">粗細</span>
+          <div class="seg" data-key="bw">
+            <button data-v="s">細</button><button data-v="m">中</button><button data-v="l">粗</button>
+          </div>
+        </div>
+        <div class="group" id="stampBox">
+          <div class="shapes" id="shapes"></div>
+          <label class="rng" for="stampSize"><span>大小</span><output id="sizeOut"></output></label>
+          <input type="range" id="stampSize" min="30" max="300" step="5">
+          <label class="rng" for="stampRot"><span>旋轉</span><output id="rotOut"></output></label>
+          <input type="range" id="stampRot" min="0" max="345" step="15">
         </div>
         <div class="row" id="polyBox">
           <button id="polyDone" disabled>完成這一塊</button><button id="polyCancel" disabled>取消</button>
         </div>
         <div class="group">
-          <span class="label">格線大小</span>
+          <span class="label">格線</span>
           <div class="seg" data-key="grid">
-            <button data-v="8">8 × 8 格</button><button data-v="12">12 × 12 格</button><button data-v="16">16 × 16 格</button>
+            <button data-v="8">8 × 8</button><button data-v="12">12 × 12</button><button data-v="16">16 × 16</button>
+          </div>
+          <div class="seg" data-key="gridShow">
+            <button data-v="on">顯示格線</button><button data-v="off">隱藏格線</button>
           </div>
         </div>
         <div class="group">
@@ -281,7 +309,7 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid
         <div class="row">
           <button id="undo">復原</button><button id="redo">重做</button><button id="clearAll">全部清空</button>
         </div>
-        <div class="row"><button id="sample">載入範例：小蘑菇</button></div>
+        <div class="row"><button id="sample">範例：格子小蘑菇</button><button id="sample2">範例：手繪小魚</button></div>
         <div class="group">
           <label class="label" for="dName">作品名稱（會印在底稿上）</label>
           <input id="dName" class="txt" type="text" maxlength="12" value="我的設計">
@@ -676,7 +704,7 @@ function renderArt(ld, res){
 }
 
 /* ---------- 狀態 ---------- */
-const S = { base:'print', mode:'lesson', lesson:0, last:0, lstep:0, speed:'mid', tool:'cell', grid:'12', color:'red', custom:null };
+const S = { bw:'m', gridShow:'on', stamp:'heart', stampSize:110, stampRot:0, base:'print', mode:'lesson', lesson:0, last:0, lstep:0, speed:'mid', tool:'cell', grid:'12', color:'red', custom:null };
 let LD = null, lessonSteps = [], loadSeq = 0;
 let busy = false, animToken = 0, recording = false, caption = null, hudMsg = null;
 const V = { boardT:1, drawT:0, row:'none', sheetsT:0, pileT:0, tearT:-1, done:0, cur:-1, glueT:0, fly:[], markT:0, finT:0 };
@@ -1016,40 +1044,136 @@ async function loadLesson(idx, autoRun=true, keepStep=0){
 }
 
 /* ---------- 自己設計 ---------- */
+/* 設計的東西：DS.cells（格子）＋ DS.polys（依序疊上去的物件）
+   t: poly 多邊形・free 手繪封閉形・stamp 圖形印章・stroke 畫筆（色紙）・line 簽字筆線條・fill 油漆桶 */
 const DKEY = 'tornMosaic.design.v1';
 const SAMPLE_ART = ['....RRRR....','..RRRRRRRR..','.RRWWRRWWRR.','.RWWWRRWWWR.','RRRWRRRRWRRR','RRRRRRRRRRRR','...YYYYYY...','...YBYYBY...','...YYYYYY...','....YYYY....','GGGGGGGGGGGG','GGGGGGGGGGGG'];
 const SAMPLE_KEY = {R:'red', W:'white', Y:'yellow', B:'black', G:'lgreen'};
+const BW = {stroke:{s:45, m:75, l:115}, line:{s:6, m:10, l:16}};
+const unitRing = (n, f) => { const o = []; for (let i=0;i<n;i++){ const t = 2*Math.PI*i/n; o.push(...f(t)); } return o; };
+const STAMPS = {
+  circle:  {n:'圓形', u:unitRing(48, t => [Math.cos(t), Math.sin(t)])},
+  square:  {n:'方形', u:[-.8,-.8, .8,-.8, .8,.8, -.8,.8]},
+  triangle:{n:'三角形', u:[0,-1, .9,.62, -.9,.62]},
+  star:    {n:'星星', u:starPts(0,0,1,.42)},
+  heart:   {n:'愛心', u:unitRing(64, t => [Math.pow(Math.sin(t),3), -(13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t))/16 - .12])},
+  drop:    {n:'水滴', u:unitRing(56, t => [.8*Math.sin(t)*Math.sin(t/2), -Math.cos(t)])},
+  leaf:    {n:'葉子', u:unitRing(56, t => [.55*Math.sin(t)*Math.abs(Math.sin(t)), -Math.cos(t)])},
+  moon:    {n:'月亮', u:(() => { const o = []; for (let i=0;i<=30;i++){ const a = (50.1 + i/30*259.8)*D2R; o.push(Math.cos(a), Math.sin(a)); }
+              for (let i=1;i<30;i++){ const a = (280.5 - i/30*201)*D2R; o.push(.5+.78*Math.cos(a), .78*Math.sin(a)); } return o; })()},
+  flower:  {n:'花', u:unitRing(100, t => { const r = .55+.45*Math.abs(Math.cos(2.5*(t+Math.PI/2))); return [r*Math.cos(t), r*Math.sin(t)]; })},
+  cloud:   {n:'雲', u:unitRing(90, t => { const r = .68+.2*Math.abs(Math.sin(3*t)); return [r*Math.cos(t)*1.15, Math.min(.42, r*Math.sin(t))]; })}
+};
+function stampPts(shape, x, y, size, rot){ const c = Math.cos(rot*D2R), sn = Math.sin(rot*D2R), u = STAMPS[shape].u, o = [];
+  for (let i=0;i<u.length;i+=2) o.push(Math.round(x + (u[i]*c - u[i+1]*sn)*size), Math.round(y + (u[i]*sn + u[i+1]*c)*size)); return o; }
 function sampleDesign(){ const N = 12, cells = Array(N*N).fill(null);
   SAMPLE_ART.forEach((row, y) => [...row].forEach((ch, x) => { if (SAMPLE_KEY[ch]) cells[y*N+x] = SAMPLE_KEY[ch]; }));
-  const sun = []; for (let k=0;k<10;k++){ const [x,y] = pol(110,110,k%2?42:78,k*36-90); sun.push(Math.round(x),Math.round(y)); }
-  return {N, cells, polys:[{c:'orange', pts:sun}], name:'小蘑菇'}; }
+  return {N, cells, polys:[{t:'stamp', shape:'star', c:'orange', pts:stampPts('star',110,110,78,0)}], name:'小蘑菇', showGrid:'on'}; }
+function sampleDesign2(){
+  const rng = RNG(77), wob = (cx,cy,rx,ry,n=40) => { const o=[]; for (let i=0;i<n;i++){ const a=2*Math.PI*i/n, k=1+(rng()-.5)*.06; o.push(Math.round(cx+Math.cos(a)*rx*k), Math.round(cy+Math.sin(a)*ry*k)); } return o; };
+  const wave = (y, amp) => { const o=[]; for (let x=70;x<=930;x+=30) o.push(x, Math.round(y+Math.sin(x/70)*amp)); return o; };
+  const d = {N:12, cells:Array(144).fill(null), name:'手繪小魚', showGrid:'off', polys:[
+    {t:'free', c:'orange', pts:wob(430,450,250,165)},
+    {t:'stamp', shape:'triangle', c:'yellow', pts:stampPts('triangle',735,450,140,-90)},
+    {t:'stamp', shape:'leaf', c:'yellow', pts:stampPts('leaf',450,275,70,30)},
+    {t:'stroke', c:'yellow', w:75, pts:qcurve(330,400,350,450,330,505,8).map(Math.round)},
+    {t:'stamp', shape:'circle', c:'white', pts:stampPts('circle',260,410,42,0)},
+    {t:'line', w:18, pts:[262,412, 263,412]},
+    {t:'line', w:10, pts:qcurve(180,470,205,500,240,490,10).map(Math.round)},
+    {t:'line', w:8, pts:ringPts(140,250,28,18).map(Math.round)}, {t:'line', w:8, pts:ringPts(95,160,18,14).map(Math.round)},
+    {t:'stroke', c:'blue', w:75, pts:wave(820,22)}, {t:'stroke', c:'blue', w:75, pts:wave(915,18)}
+  ]};
+  d.polys.push({t:'fill', c:'sky', rle:floodRLE(d, 600, 120)});
+  return d; }
 function loadDesign(){ try { const d = JSON.parse(localStorage.getItem(DKEY)); if (d && d.N && Array.isArray(d.cells) && Array.isArray(d.polys)) return d; } catch(e){} return null; }
 function saveDesign(){ try { localStorage.setItem(DKEY, JSON.stringify(DS)); } catch(e){} }
+const kindOf = it => it.t || (it.free ? 'free' : 'poly');
+const isArea = it => ['poly','free','stamp'].includes(kindOf(it));
+/* 油漆桶：在 500×500 的平面圖上找出同一個顏色、連在一起的範圍 */
+const FR = 500, maskCache = new Map(), tintCache = new Map();
+function rleToMask(rle){
+  if (maskCache.has(rle)) return maskCache.get(rle);
+  const cv = mk(FR), c = cv.getContext('2d'), id = c.createImageData(FR, FR); let pos = 0, on = false;
+  for (const r of rle.split(',')){ const n = parseInt(r, 36); if (on) for (let k=pos;k<pos+n;k++) id.data[k*4+3] = 255; pos += n; on = !on; }
+  c.putImageData(id, 0, 0); if (maskCache.size > 60) maskCache.clear(); maskCache.set(rle, cv); return cv;
+}
+function tinted(it){ const key = it.rle.length + ':' + it.rle.slice(0,40) + it.rle.slice(-40) + it.c;
+  if (tintCache.has(key)) return tintCache.get(key);
+  const cv = mk(FR), c = cv.getContext('2d'); c.drawImage(rleToMask(it.rle),0,0); c.globalCompositeOperation='source-in'; c.fillStyle = COLORS[it.c].h; c.fillRect(0,0,FR,FR);
+  if (tintCache.size > 60) tintCache.clear(); tintCache.set(key, cv); return cv; }
+function pathOf(ctx, pts, close){ ctx.beginPath(); ctx.moveTo(pts[0],pts[1]); for (let i=2;i<pts.length;i+=2) ctx.lineTo(pts[i],pts[i+1]); if (close) ctx.closePath(); }
+function drawItem(ctx, it){   // ctx 已經換成 0–1000 座標
+  const k = kindOf(it);
+  if (isArea(it)){ pathOf(ctx, it.pts, true); ctx.fillStyle = COLORS[it.c].h; ctx.fill(); }
+  else if (k === 'stroke' || k === 'line'){ ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round'; ctx.lineWidth = it.w; ctx.strokeStyle = k === 'line' ? '#2b2b2b' : COLORS[it.c].h; pathOf(ctx, it.pts, false); ctx.stroke(); ctx.restore(); }
+  else if (k === 'fill') ctx.drawImage(tinted(it), 0, 0, 1000, 1000);
+}
+function flatCanvas(d, size){
+  const cv = mk(size), c = cv.getContext('2d'), N = d.N, cs = 1000/N; c.scale(size/1000, size/1000);
+  c.fillStyle = '#ffffff'; c.fillRect(0,0,1000,1000);
+  d.cells.forEach((k,i) => { if (k){ c.fillStyle = COLORS[k].h; c.fillRect((i%N)*cs-.5, ((i/N)|0)*cs-.5, cs+1, cs+1); } });
+  for (const it of d.polys) drawItem(c, it);
+  return cv;
+}
+function floodRLE(d, x, y){
+  const cv = flatCanvas(d, FR), data = cv.getContext('2d').getImageData(0,0,FR,FR).data;
+  const sx = clamp(Math.floor(x*FR/1000),0,FR-1), sy = clamp(Math.floor(y*FR/1000),0,FR-1), s0 = (sy*FR+sx)*4;
+  const r0 = data[s0], g0 = data[s0+1], b0 = data[s0+2], same = i => Math.abs(data[i]-r0) + Math.abs(data[i+1]-g0) + Math.abs(data[i+2]-b0) < 70;
+  const m = new Uint8Array(FR*FR), q = [sy*FR+sx]; m[q[0]] = 1;
+  while (q.length){ const j = q.pop(), px = j%FR, py = (j/FR)|0;
+    for (const n of [px>0?j-1:-1, px<FR-1?j+1:-1, py>0?j-FR:-1, py<FR-1?j+FR:-1]) if (n>=0 && !m[n] && same(n*4)){ m[n] = 1; q.push(n); } }
+  const g = m.slice(); for (let j=0;j<FR*FR;j++) if (m[j]){ const px=j%FR; if (px>0) g[j-1]=1; if (px<FR-1) g[j+1]=1; if (j>=FR) g[j-FR]=1; if (j<FR*FR-FR) g[j+FR]=1; }
+  const runs = []; let cur = 0, n = 0; for (let j=0;j<FR*FR;j++){ if (g[j] !== cur){ runs.push(n.toString(36)); n = 0; cur = g[j]; } n++; } runs.push(n.toString(36));
+  let cnt = 0; for (let j=0;j<FR*FR;j++) cnt += g[j];
+  return runs.join(',') + (cnt ? '' : '');
+}
+const rleArea = rle => { let a = 0, on = false; for (const r of rle.split(',')){ if (on) a += parseInt(r,36); on = !on; } return a/(FR*FR); };
 let DS = loadDesign() || sampleDesign();
-S.grid = String(DS.N);
+S.grid = String(DS.N); S.gridShow = DS.showGrid || 'on';
 const hist = [], redoStack = [];
 const snap = () => JSON.stringify({N:DS.N, cells:DS.cells, polys:DS.polys});
 function pushHist(){ hist.push(snap()); if (hist.length > 80) hist.shift(); redoStack.length = 0; }
 function restoreSnap(s){ const o = JSON.parse(s); DS.N = o.N; DS.cells = o.cells; DS.polys = o.polys; S.grid = String(DS.N); }
-let poly = [], hoverPt = null, painting = false, freeLine = null;
+let poly = [], hoverPt = null, painting = false, freeLine = null, penLine = null;
 function customLesson(){
-  const N = DS.N, cs = 1000/N, parts = [], order = [];
+  const N = DS.N, cs = 1000/N, parts = [], order = [], cnt = {};
   DS.cells.forEach(c => { if (c && !order.includes(c)) order.push(c); });
   for (const c of order) parts.push({name:`${COLORS[c].n}色格子`, c, z:1, draw:g=>{ DS.cells.forEach((k,i) => { if (k===c){ const x=i%N, y=(i/N)|0; g.rect(x*cs-.6, y*cs-.6, (x+1)*cs+.6, (y+1)*cs+.6); } }); }});
-  DS.polys.forEach((p,i) => { const pts = p.pts.slice(); parts.push({name:`${COLORS[p.c].n}色${p.free ? '手繪' : ''}色塊`, c:p.c, z:2+i, draw:g=>g.poly(pts)}); });
+  const label = it => { const k = kindOf(it), cn = COLORS[it.c].n;
+    const base = k === 'stamp' ? `${cn}色${STAMPS[it.shape] ? STAMPS[it.shape].n : '圖形'}` : k === 'stroke' ? `${cn}色筆畫` : k === 'fill' ? `${cn}色填色區` : k === 'free' ? `${cn}色手繪色塊` : `${cn}色色塊`;
+    cnt[base] = (cnt[base] || 0) + 1; return base; };
+  const lines = [];
+  DS.polys.forEach((it, i) => { const k = kindOf(it);
+    if (k === 'line'){ lines.push(it); return; }
+    const pts = it.pts ? it.pts.slice() : null, w = it.w, rle = it.rle;
+    const draw = isArea(it) ? (g => g.poly(pts))
+      : k === 'stroke' ? (g => { const c = g.ctx; c.save(); c.lineWidth = w; c.lineCap = c.lineJoin = 'round'; c.strokeStyle = '#000'; pathOf(c, pts, false); c.stroke(); c.restore(); })
+      : (g => g.ctx.drawImage(rleToMask(rle), 0, 0, 1000, 1000));
+    parts.push({name:label(it), c:it.c, z:2+i, draw}); });
+  // 同名的區塊加上編號，步驟清單才分得出來
+  const seen = {}; for (const p of parts){ if (cnt[p.name] > 1){ seen[p.name] = (seen[p.name] || 0) + 1; p.name += ` ${seen[p.name]}`; } }
   const name = ($('#dName').value || '').trim() || '我的設計';
-  return {name, level:0, theme:'自己設計', tip:'', parts, custom:true, sig:snap()};
+  const les = {name, level:0, theme:'自己設計', tip:'', parts, custom:true, sig:snap()};
+  if (lines.length){ const ws = lines.map(l => l.w).sort((a,b)=>a-b); les.marker = {name:'簽字筆線條', lines:lines.map(l => l.pts.length > 2 ? l.pts : [...l.pts, l.pts[0]+.1, l.pts[1]]), w:ws[ws.length>>1]}; }
+  return les;
 }
 function drawEdit(ctx, b){
   const bs = 1000*b.s, N = DS.N, cs = bs/N;
   ctx.fillStyle='#fffdf8'; ctx.fillRect(b.x, b.y, bs, bs);
   DS.cells.forEach((c,i) => { if (!c) return; const x=i%N, y=(i/N)|0; ctx.fillStyle = COLORS[c].h; ctx.fillRect(b.x+x*cs, b.y+y*cs, cs+.5, cs+.5);
     if (c === 'white'){ ctx.strokeStyle='rgba(150,130,120,.55)'; ctx.lineWidth=2.5; ctx.strokeRect(b.x+x*cs+4, b.y+y*cs+4, cs-8, cs-8); } });
-  ctx.strokeStyle='rgba(120,100,90,.28)'; ctx.lineWidth=1.2;
-  for (let i=0;i<=N;i++){ ctx.beginPath(); ctx.moveTo(b.x+i*cs, b.y); ctx.lineTo(b.x+i*cs, b.y+bs); ctx.moveTo(b.x, b.y+i*cs); ctx.lineTo(b.x+bs, b.y+i*cs); ctx.stroke(); }
+  if (S.gridShow === 'on' || S.tool === 'cell'){ ctx.strokeStyle='rgba(120,100,90,.28)'; ctx.lineWidth=1.2;
+    for (let i=0;i<=N;i++){ ctx.beginPath(); ctx.moveTo(b.x+i*cs, b.y); ctx.lineTo(b.x+i*cs, b.y+bs); ctx.moveTo(b.x, b.y+i*cs); ctx.lineTo(b.x+bs, b.y+i*cs); ctx.stroke(); } }
   const toS = (x,y) => [b.x + x*b.s, b.y + y*b.s];
-  for (const p of DS.polys){ ctx.beginPath(); ctx.moveTo(...toS(p.pts[0],p.pts[1])); for (let i=2;i<p.pts.length;i+=2) ctx.lineTo(...toS(p.pts[i],p.pts[i+1])); ctx.closePath();
-    ctx.fillStyle = COLORS[p.c].h; ctx.fill(); ctx.strokeStyle='rgba(60,40,30,.55)'; ctx.lineWidth=2; ctx.stroke(); }
+  ctx.save(); ctx.translate(b.x, b.y); ctx.scale(b.s, b.s);
+  for (const it of DS.polys){ drawItem(ctx, it); if (isArea(it) && it.c === 'white'){ pathOf(ctx, it.pts, true); ctx.strokeStyle='rgba(150,130,120,.6)'; ctx.lineWidth=2.5; ctx.stroke(); } }
+  if (penLine && penLine.pts.length >= 2){ const L = penLine.pts.length > 2 ? penLine.pts : [...penLine.pts, penLine.pts[0]+.1, penLine.pts[1]];
+    drawItem(ctx, {t:penLine.t, c:S.color, w:penLine.w, pts:L}); }
+  if (hoverPt && S.tool === 'stamp'){ ctx.save(); pathOf(ctx, stampPts(S.stamp, hoverPt[0], hoverPt[1], S.stampSize, S.stampRot), true);
+    ctx.fillStyle = COLORS[S.color].h + '88'; ctx.fill(); ctx.setLineDash([10,7]); ctx.strokeStyle='#3b2b2b'; ctx.lineWidth = 3/b.s*.7; ctx.stroke(); ctx.restore(); }
+  if (hoverPt && (S.tool === 'stroke' || S.tool === 'line') && !penLine){ ctx.beginPath(); ctx.arc(hoverPt[0], hoverPt[1], BW[S.tool][S.bw]/2, 0, 7);
+    ctx.strokeStyle = 'rgba(59,43,43,.7)'; ctx.lineWidth = 2/b.s*.7; ctx.stroke(); }
+  ctx.restore();
   if (S.tool==='poly' && poly.length){
     ctx.save(); ctx.strokeStyle='#d9a400'; ctx.lineWidth=3; ctx.setLineDash([10,7]);
     ctx.beginPath(); ctx.moveTo(...toS(poly[0],poly[1])); for (let i=2;i<poly.length;i+=2) ctx.lineTo(...toS(poly[i],poly[i+1]));
@@ -1076,16 +1200,28 @@ function toArt(e){
   return [(lx - b.x)/b.s, (ly - b.y)/b.s];
 }
 function snapPt([x,y]){ const cs = 1000/DS.N, sx = Math.round(x/cs)*cs, sy = Math.round(y/cs)*cs;
-  return Math.hypot(sx-x, sy-y) < cs*.28 ? [sx, sy] : [x, y]; }
+  return S.gridShow === 'on' && Math.hypot(sx-x, sy-y) < cs*.28 ? [sx, sy] : [x, y]; }
 function inPoly(x, y, p){ let ins = false; for (let i=0,j=p.length-2;i<p.length;j=i,i+=2){ const xi=p[i], yi=p[i+1], xj=p[j], yj=p[j+1];
   if ((yi>y) !== (yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) ins = !ins; } return ins; }
+function distLine(x, y, p){ let best = 1e9; if (p.length === 2) return Math.hypot(x-p[0], y-p[1]);
+  for (let i=2;i<p.length;i+=2){ const ax=p[i-2], ay=p[i-1], bx=p[i], by=p[i+1], dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy||1, t=clamp(((x-ax)*dx+(y-ay)*dy)/l2,0,1);
+    best = Math.min(best, Math.hypot(x-ax-dx*t, y-ay-dy*t)); } return best; }
+function hitItem(x, y){
+  for (let i=DS.polys.length-1;i>=0;i--){ const it = DS.polys[i], k = kindOf(it);
+    if (isArea(it) && inPoly(x, y, it.pts)) return i;
+    if ((k === 'stroke' || k === 'line') && distLine(x, y, it.pts) < it.w/2 + 10) return i;
+    if (k === 'fill'){ const m = rleToMask(it.rle).getContext('2d').getImageData(clamp(Math.floor(x*FR/1000),0,FR-1), clamp(Math.floor(y*FR/1000),0,FR-1), 1, 1).data; if (m[3] > 0) return i; } }
+  return -1; }
 function paintCell([x,y]){ const N = DS.N, cx = Math.floor(x/(1000/N)), cy = Math.floor(y/(1000/N)); if (cx<0||cy<0||cx>=N||cy>=N) return false;
   const v = S.tool==='erase' ? null : S.color, i = cy*N+cx; if (DS.cells[i] === v) return false; DS.cells[i] = v; return true; }
-function finishPoly(){ if (poly.length >= 6){ pushHist(); DS.polys.push({c:S.color, pts:poly.map(v => Math.round(v))}); designChanged(); } poly = []; updateUI(); render(); }
-function designChanged(){ saveDesign(); updateDesignStat(); updateDesignA4(); }
+function finishPoly(){ if (poly.length >= 6){ pushHist(); DS.polys.push({t:'poly', c:S.color, pts:poly.map(v => Math.round(v))}); designChanged(); } poly = []; updateUI(); render(); }
+function designChanged(){ DS.showGrid = S.gridShow; saveDesign(); updateDesignStat(); updateDesignA4(); }
 function updateDesignStat(){
-  const used = new Set([...DS.cells.filter(Boolean), ...DS.polys.map(p => p.c)]), nCells = DS.cells.filter(Boolean).length;
-  $('#dStat').innerHTML = `<span class="chip">${used.size} 種顏色</span><span class="chip">${nCells} 格</span><span class="chip">${DS.polys.filter(p=>!p.free).length} 個多邊形</span><span class="chip">${DS.polys.filter(p=>p.free).length} 個手繪形</span>`;
+  const used = new Set([...DS.cells.filter(Boolean), ...DS.polys.filter(p => kindOf(p) !== 'line').map(p => p.c)]), nCells = DS.cells.filter(Boolean).length;
+  const n = t => DS.polys.filter(p => kindOf(p) === t).length;
+  const chips = [`${used.size} 種顏色`, nCells ? `${nCells} 格` : '', n('stroke') ? `${n('stroke')} 條畫筆` : '', n('line') ? `${n('line')} 條簽字筆線` : '', n('fill') ? `${n('fill')} 個填色區` : '',
+    n('stamp') ? `${n('stamp')} 個圖形` : '', n('free') ? `${n('free')} 個手繪形` : '', n('poly') ? `${n('poly')} 個多邊形` : ''].filter(Boolean);
+  $('#dStat').innerHTML = chips.map(c => `<span class="chip">${c}</span>`).join('');
 }
 
 /* ---------- 下載 ---------- */
@@ -1235,9 +1371,17 @@ for (const el of $$('.seg[data-key]')){
     if (key === 'grid'){ const has = DS.cells.some(Boolean); pushHist(); DS.N = +b.dataset.v; DS.cells = Array(DS.N*DS.N).fill(null); designChanged();
       if (has) toast(`換成 ${DS.N} × ${DS.N} 格，格子已清空；按「復原」可以找回`); }
     S[key] = b.dataset.v; if (key === 'tool') poly = [];
+    if (key === 'gridShow') designChanged();
     updateUI(); render();
   });
 }
+{ const el = $('#shapes');
+  for (const [k, st] of Object.entries(STAMPS)){ const b = document.createElement('button'); b.dataset.v = k; b.title = st.n; b.setAttribute('aria-label', st.n);
+    const pts = []; for (let i=0;i<st.u.length;i+=2) pts.push(`${(st.u[i]*10+12).toFixed(2)},${(st.u[i+1]*10+12).toFixed(2)}`);
+    b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="${pts.join(' ')}" fill="currentColor"/></svg>`;
+    b.onclick = () => { S.stamp = k; updateUI(); }; el.appendChild(b); }
+  const sz = $('#stampSize'), rt = $('#stampRot'); sz.value = S.stampSize; rt.value = S.stampRot;
+  sz.oninput = () => { S.stampSize = +sz.value; updateUI(); }; rt.oninput = () => { S.stampRot = +rt.value; updateUI(); }; }
 { const el = $('#dColors'); for (const [key, c] of Object.entries(COLORS)){ const b = document.createElement('button'); b.dataset.v = key;
     b.innerHTML = `<i style="background:${c.h}"></i>${c.n}`; b.onclick = () => { S.color = key; updateUI(); }; el.appendChild(b); } }
 
@@ -1284,7 +1428,9 @@ $('#dRecord').onclick = async () => { const les = customLesson(); if (!les.parts
 $('#undo').onclick = () => { if (!hist.length) return; redoStack.push(snap()); restoreSnap(hist.pop()); designChanged(); updateUI(); render(); };
 $('#redo').onclick = () => { if (!redoStack.length) return; hist.push(snap()); restoreSnap(redoStack.pop()); designChanged(); updateUI(); render(); };
 $('#clearAll').onclick = () => { if (!DS.cells.some(Boolean) && !DS.polys.length) return; pushHist(); DS.cells = Array(DS.N*DS.N).fill(null); DS.polys = []; poly = []; designChanged(); updateUI(); render(); toast('已全部清空，按「復原」可以找回'); };
-$('#sample').onclick = () => { pushHist(); const s = sampleDesign(); DS.N = s.N; DS.cells = s.cells; DS.polys = s.polys; S.grid = '12'; $('#dName').value = s.name; DS.name = s.name; designChanged(); updateUI(); render(); };
+const loadSample = s => { pushHist(); DS.N = s.N; DS.cells = s.cells; DS.polys = s.polys; S.grid = String(s.N); S.gridShow = s.showGrid; $('#dName').value = s.name; DS.name = s.name; designChanged(); updateUI(); render(); };
+$('#sample').onclick = () => { loadSample(sampleDesign()); S.tool = 'cell'; updateUI(); };
+$('#sample2').onclick = () => { loadSample(sampleDesign2()); S.tool = 'stroke'; updateUI(); };
 $('#polyDone').onclick = finishPoly;
 $('#polyCancel').onclick = () => { poly = []; updateUI(); render(); };
 $('#dName').value = DS.name || '我的設計';
@@ -1309,8 +1455,15 @@ stage.addEventListener('pointerdown', e => {
     if (p[0] < -20 || p[1] < -20 || p[0] > 1020 || p[1] > 1020) return;
     poly.push(clamp(p[0],0,1000), clamp(p[1],0,1000)); updateUI(); render(); return;
   }
-  if (S.tool === 'free'){ freeLine = [clamp(pt[0],0,1000), clamp(pt[1],0,1000)]; stage.setPointerCapture(e.pointerId); render(); return; }
-  if (S.tool === 'erase'){ for (let i=DS.polys.length-1;i>=0;i--) if (inPoly(pt[0], pt[1], DS.polys[i].pts)){ pushHist(); DS.polys.splice(i,1); designChanged(); render(); return; } }
+  const inside = pt[0] >= 0 && pt[1] >= 0 && pt[0] <= 1000 && pt[1] <= 1000;
+  if (S.tool === 'free'){ if (!inside) return; freeLine = [pt[0], pt[1]]; stage.setPointerCapture(e.pointerId); render(); return; }
+  if (S.tool === 'stroke' || S.tool === 'line'){ if (!inside) return; penLine = {t:S.tool, w:BW[S.tool][S.bw], pts:[pt[0], pt[1]]}; stage.setPointerCapture(e.pointerId); render(); return; }
+  if (S.tool === 'stamp'){ if (!inside) return; pushHist(); DS.polys.push({t:'stamp', shape:S.stamp, c:S.color, pts:stampPts(S.stamp, pt[0], pt[1], S.stampSize, S.stampRot)}); designChanged(); updateUI(); render(); return; }
+  if (S.tool === 'bucket'){ if (!inside) return; const rle = floodRLE(DS, pt[0], pt[1]), a = rleArea(rle);
+    if (a < .001){ toast('這裡太小了，點在要填色的空白範圍裡'); return; }
+    pushHist(); DS.polys.push({t:'fill', c:S.color, rle}); designChanged(); updateUI(); render();
+    if (a > .55) toast('整片都填滿了嗎？如果不是，代表線條沒有接起來；按「復原」，把線補好再填'); return; }
+  if (S.tool === 'erase'){ const i = hitItem(pt[0], pt[1]); if (i >= 0){ pushHist(); DS.polys.splice(i,1); designChanged(); updateUI(); render(); return; } }
   pushHist(); painting = true; stage.setPointerCapture(e.pointerId);
   if (!paintCell(pt)) { /* 沒改變也沒關係 */ } render();
 });
@@ -1320,6 +1473,8 @@ stage.addEventListener('pointermove', e => {
   if (painting) paintCell(pt);
   if (freeLine){ const n = freeLine.length, x = clamp(pt[0],0,1000), y = clamp(pt[1],0,1000);
     if (Math.hypot(x-freeLine[n-2], y-freeLine[n-1]) > 6) freeLine.push(x, y); }
+  if (penLine){ const L = penLine.pts, n = L.length, x = clamp(pt[0],0,1000), y = clamp(pt[1],0,1000);
+    if (Math.hypot(x-L[n-2], y-L[n-1]) > 5) L.push(x, y); }
   requestRender();
 });
 /* 手繪：放開時自動接回起點，抽稀後修圓滑，變成一個色塊 */
@@ -1330,9 +1485,18 @@ function finishFree(){
   if (pts.length < 8 || Math.abs(area)/2 < 1500){ toast('圈得太小了，按住拖曳畫大一點的一圈'); render(); return; }
   let q = []; for (let i=0;i<pts.length;i+=2) q.push([pts[i], pts[i+1]]);
   for (let it=0; it<2; it++){ const o = []; for (let i=0;i<q.length;i++){ const [a,b] = q[i], [c,d] = q[(i+1)%q.length]; o.push([a*.75+c*.25, b*.75+d*.25], [a*.25+c*.75, b*.25+d*.75]); } q = o; }
-  pushHist(); DS.polys.push({c:S.color, free:true, pts:q.flat().map(v => Math.round(v))}); designChanged(); updateUI(); render();
+  pushHist(); DS.polys.push({t:'free', c:S.color, pts:q.flat().map(v => Math.round(v))}); designChanged(); updateUI(); render();
 }
-const endPaint = () => { if (freeLine){ finishFree(); return; } if (painting){ painting = false; if (hist.length && hist[hist.length-1] === snap()) hist.pop(); designChanged(); updateUI(); render(); } };
+/* 畫筆、簽字筆：抽稀後修順，點一下就是一個圓點 */
+function finishPen(){
+  const P = penLine; penLine = null; if (!P) return;
+  let pts = []; const L = P.pts; for (let i=0;i<L.length;i+=2){ const n = pts.length; if (!n || Math.hypot(L[i]-pts[n-2], L[i+1]-pts[n-1]) >= 10 || i === L.length-2) pts.push(L[i], L[i+1]); }
+  if (pts.length >= 6){ let q = []; for (let i=0;i<pts.length;i+=2) q.push([pts[i], pts[i+1]]);
+    const o = [q[0]]; for (let i=0;i<q.length-1;i++){ const [a,b] = q[i], [c,d] = q[i+1]; o.push([a*.75+c*.25, b*.75+d*.25], [a*.25+c*.75, b*.25+d*.75]); } o.push(q[q.length-1]); pts = o.flat(); }
+  if (pts.length === 2) pts.push(pts[0]+.5, pts[1]);
+  pushHist(); DS.polys.push({t:P.t, ...(P.t === 'stroke' ? {c:S.color} : {}), w:P.w, pts:pts.map(v => Math.round(v*10)/10)}); designChanged(); updateUI(); render();
+}
+const endPaint = () => { if (penLine){ finishPen(); return; } if (freeLine){ finishFree(); return; } if (painting){ painting = false; if (hist.length && hist[hist.length-1] === snap()) hist.pop(); designChanged(); updateUI(); render(); } };
 stage.addEventListener('pointerup', endPaint);
 stage.addEventListener('pointercancel', endPaint);
 stage.addEventListener('pointerleave', () => { if (!painting){ hoverPt = null; requestRender(); } });
@@ -1383,7 +1547,11 @@ function updateHint(){
   else if (recording) h = '錄影中，請稍候…';
   else if (S.mode === 'lesson'){ const s = lessonSteps[S.lstep]; h = s ? `步驟 ${S.lstep+1}：${s.title}${busy ? '…' : ''}` : ''; }
   else if (S.tool === 'cell') h = `按住拖曳，把格子塗成「${COLORS[S.color].n}」。`;
-  else if (S.tool === 'erase') h = '按住拖曳擦掉格子；點一下多邊形色塊可以刪掉它。';
+  else if (S.tool === 'erase') h = '點一下就刪掉最上面的那個圖形或線條；按住拖曳擦掉格子。';
+  else if (S.tool === 'stroke') h = `按住拖曳畫線，這條線會貼上「${COLORS[S.color].n}」色紙；點一下是一個圓點。`;
+  else if (S.tool === 'line') h = '畫黑色簽字筆線條（眼睛、觸角、輪廓），最後一步才畫；也可以用來圍出油漆桶的範圍。';
+  else if (S.tool === 'bucket') h = `點一下，把線條圍起來的範圍填成「${COLORS[S.color].n}」；點空白處就是填背景。`;
+  else if (S.tool === 'stamp') h = `點一下蓋上「${STAMPS[S.stamp].n}」，大小和角度在右邊調整。`;
   else if (S.tool === 'free') h = freeLine ? '畫一整圈，放開手就會自動接回起點。' : `按住拖曳畫一個封閉的形狀（例如雲、葉子），放開就變成「${COLORS[S.color].n}」色塊。`;
   else h = poly.length ? '繼續點轉角，點回第一個點就完成這一塊。' : '一下一下點出轉角，畫出自由形狀的色塊（靠近格線交叉點會自動對齊）。';
   $('#hint').textContent = h;
@@ -1412,14 +1580,19 @@ function updateUI(){
     stage.style.cursor = 'default';
     $('#tag').textContent = LD ? `${LD.colors.length} 色・${les.parts.length} 區` : '';
   } else {
-    $('#dHow').textContent = '用格子塗色畫出圖案，用多邊形畫直邊的形狀，或用手繪封閉形直接圈出圓圓彎彎的形狀；每種顏色會自動編號。畫好按「播放」，就會變成一步一步的撕貼動畫和 A4 底稿。';
+    $('#dHow').textContent = '手繪風：先用簽字筆或畫筆畫線條，再用油漆桶把圍起來的地方填色；也可以蓋圖形印章、塗格子。每種顏色會自動編號，畫好按「播放」，就變成撕貼動畫和 A4 底稿。';
+    $('#brushBox').hidden = !(S.tool === 'stroke' || S.tool === 'line');
+    $('#brushLabel').textContent = S.tool === 'line' ? '簽字筆粗細' : '畫筆粗細（色紙條的寬度）';
+    $('#stampBox').hidden = S.tool !== 'stamp';
+    $('#shapes').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === S.stamp)));
+    $('#sizeOut').textContent = `約 ${(S.stampSize*2*18/1000).toFixed(1)} 公分`; $('#rotOut').textContent = `${S.stampRot}°`;
     $('#dColors').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === S.color)));
     $('#polyBox').hidden = S.tool !== 'poly';
     $('#polyDone').disabled = poly.length < 6; $('#polyCancel').disabled = !poly.length;
     $('#undo').disabled = !hist.length; $('#redo').disabled = !redoStack.length;
     for (const id of ['#dPlay','#dA4','#dRecord']) $(id).disabled = recording;
     stage.style.cursor = 'crosshair';
-    $('#tag').textContent = `${DS.N} × ${DS.N} 格`;
+    $('#tag').textContent = S.gridShow === 'on' || S.tool === 'cell' ? `${DS.N} × ${DS.N} 格` : '';
   }
   { const fs = isFs(), s = lessonSteps[S.lstep], last = S.lstep >= lessonSteps.length-1;
     $('#fsBtn').textContent = fs ? '✕ 離開全螢幕' : '⛶ 全螢幕';
@@ -1455,7 +1628,7 @@ readTokens();
 updateDesignStat();
 resize();
 loadLesson(0, false).then(() => setTimeout(() => runLessonStep(0), 300));
-window.__mosaic = {S, V, LESSONS, get LD(){ return LD; }, buildLesson, makeSheet, loadLesson, runLessonStep};
+window.__mosaic = {S, V, LESSONS, get LD(){ return LD; }, buildLesson, makeSheet, loadLesson, runLessonStep, renderArt, setMode};
 })();
 </script>
 
